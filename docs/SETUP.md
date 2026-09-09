@@ -104,3 +104,61 @@ Homebrew Python remains and is what uv will draw on: 3.13.14 is installed at
 - https://github.com/CyberTimon/RapidRAW
 - https://github.com/CyberTimon/RapidRAW-AI-Connector
 - https://github.com/Comfy-Org/ComfyUI-Manager (moved from ltdrdata/)
+
+## The absolute-path failure, and the fix
+
+The connector does not work against a stock ComfyUI. Found by reading the
+source, then reproduced deliberately before fixing anything.
+
+**Symptom.** `POST /inpaint` returns 500. ComfyUI logs:
+
+    Failed to validate prompt for output 41:
+    * LoadImage 47:
+      - Custom validation failed: image - Invalid image file: .../cache/mask_<uuid>.png
+    * LoadImage 30:
+      - Custom validation failed: image - Invalid image file: .../cache/sources/<id>.png
+
+**Root cause.** `build_workflow` in `engine.py` writes absolute paths into the
+workflow's two `LoadImage` nodes (30 = source, 47 = mask). ComfyUI resolves
+those in `folder_paths.get_annotated_filepath`, where two lines interact badly:
+
+    filepath = os.path.abspath(os.path.join(base_dir, name))
+    if not is_within_directory(base_dir, filepath):
+        raise ValueError(...)
+
+`os.path.join` discards `base_dir` when `name` is absolute, so `filepath`
+becomes the connector's path, which is not inside ComfyUI's input directory,
+so the guard rejects it. This is a deliberate path-traversal defence, not a
+bug in ComfyUI - the connector is the side making the wrong assumption.
+
+**Fix, no code change.** Point ComfyUI's input directory at the connector's
+cache root. Sources are written to `cache/sources/` and masks to `cache/`, so
+both fall inside it and the guard passes:
+
+    --input-directory "$CONNECTOR_DIR/cache"
+
+`scripts/run-comfyui.sh` does this from `.env`.
+
+**Better fix, for the fork.** Have the connector POST images to ComfyUI's
+`/upload/image` endpoint and reference the returned name, instead of passing
+filesystem paths. That also survives ComfyUI moving to another machine, which
+the current design cannot. This is the natural first change to make in a fork
+we own.
+
+## End-to-end proof
+
+Verified 2026-09-09 with a script standing in for RapidRAW: upload a synthetic
+1024x1024 source, then request an inpaint over a 264x264 rectangular mask.
+
+    upload -> {'status': 'cached', ...}
+    inpaint completed in 22.8s
+    response keys: ['x', 'y', 'width', 'height', 'color', 'mask']
+      color: (297, 297) RGBA
+      mask:  (297, 297) L
+
+The prompt was "a bunch of red roses, sharp focus" and the render contains red
+roses, blended to the source's colour. 22.8 s on MPS at 8 steps.
+
+Note what comes back: a patch, not a frame. The response carries an offset, a
+size, and a 297x297 region - the mask plus the workflow's 32 px padding. The
+caching claim holds in both directions, so only the changed region travels.

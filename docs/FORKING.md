@@ -80,9 +80,11 @@ weights). Forked to `BrianSmithPhotos/ComfyUI`, cloned, v0.35.0, uv venv on
 and 128 GB of VRAM. The connector's `/health` reports `connected: true`, so the
 connector-to-ComfyUI link is proven. Weights still to come - see `SETUP.md`.
 
-**3. Wire the chain with zero source changes.** Point the connector at ComfyUI,
-then point the *downloaded* RapidRAW.app at the connector via Self-Hosted AI
-Backend. This proves the whole path works before any building from source.
+**3. Wire the chain with zero source changes.** Connector-to-ComfyUI half is
+DONE 2026-09-09: a full inpaint round trip renders in 22.8 s on MPS, with no
+source changes to either side - see the absolute-path fix in `SETUP.md`. What
+remains is pointing the *downloaded* RapidRAW.app at the connector via
+Self-Hosted AI Backend, which needs a person at the keyboard.
 
 **4. Fork RapidRAW and build it.** Only now. Rust 1.96 and Node 22 are already
 installed; Tauri needs its CLI. Building a 351 MB Tauri app before knowing the
