@@ -1,0 +1,7 @@
+# Paths and hosts live here, never in tracked files: this repo is public and a
+# macOS path leaks the username.
+.env
+
+.venv/
+__pycache__/
+*.pyc
