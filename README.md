@@ -29,6 +29,6 @@ Old Python areas (`~/.pyenv`, `~/mambaforge`, `~/miniforge3`) cleared
 - [x] 0. Remote for this repo
 - [x] 1. Connector: fork, clone, run under uv
 - [x] 2. ComfyUI: serving on mps, weights in, render proven
-- [~] 3. Chain proven connector-to-ComfyUI; RapidRAW.app end still to do
+- [x] 3. Full chain proven from RapidRAW.app v1.6.3
 - [ ] 4. Fork and build RapidRAW from source
 - [ ] 5. macOS 27 spike, separately
