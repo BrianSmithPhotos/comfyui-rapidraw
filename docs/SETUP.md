@@ -223,3 +223,58 @@ If the text is pasted in, cross-check it against the absolute-path finding
 above: that is the failure most likely to differ between his setup and ours,
 since it only bites when ComfyUI and the connector disagree about the input
 directory.
+
+## Phase 3 confirmed: RapidRAW.app to connector to ComfyUI
+
+Verified 2026-09-09 16:31 from a real edit made in the app - prompt "Stormy
+clouds" on a 5184x3888 frame. Clean 200, no errors:
+
+    16:31:12 POST /inpaint       404   (source not cached yet)
+    16:31:13 POST /upload_source 200   (7855112 bytes)
+    16:31:13 POST /inpaint       200
+             Workflow completed in 16.3975s
+             Crop bounds: x=0, y=0, w=5184, h=1783
+             Total Request Time: 17.6733s
+
+**The 404 is not a fault.** RapidRAW asks first and uploads only if told the
+source is unknown, which is the whole point of the cache. Expect exactly one
+404 per new image per connector run, then never again for that image.
+
+**Timing.** The first render of a session was 22.5 s because it loaded the
+checkpoint, VAE, CLIP and ControlNet. Warm steady state is about 16 s, and
+ComfyUI logs no further "Requested to load" lines. Source resolution barely
+matters - see below for why.
+
+### The resolution ceiling - important for real photographs
+
+`workflow.json` renders every edit at **1280 px**, whatever the frame size.
+Node 37 is a `PrimitiveInt` of 1280 wired into `InpaintCropImproved`'s
+`output_target_width` and `output_target_height`, and into the `EmptyImage`
+that seeds the masked area. The chain is:
+
+    LoadImage -> InpaintCropImproved (crop to mask, 1.5x context, resize to 1280)
+              -> KSampler (8 steps, cfg 1, euler/ddim_uniform)
+              -> InpaintStitchImproved (scale back, blend 32 px, full resolution)
+
+So the generated pixels are synthesised at 1280 and then scaled up to fill the
+masked area. On the stormy-clouds edit the masked region spanned the full
+5184 px width, so the new content was enlarged roughly 4x on its long edge.
+That is the quality ceiling, and it is why a 20 MP source costs no more time
+than a 1 MP one.
+
+Raising node 37 trades time and memory for detail. It is a workflow edit, not
+a code change, and it is the obvious first experiment for photographic work.
+
+### What the app actually sends
+
+| | |
+| --- | --- |
+| Source | a 5184x3888 **JPEG** render, not the RAW |
+| Mask | full-resolution RGBA PNG |
+| Seed | supplied per request; the smoke test's fixed 42 was ours, not the app's |
+| Model | `XL_RealVisXL_V5.0_Lightning.safetensors` with SDXL VAE and a promax union ControlNet in `repaint` mode |
+
+The connector mirrors both inputs to `cache/sent/` on every request, so
+`last_sent_image.jpg` and `last_sent_mask.png` are always the last thing
+ComfyUI was asked to work on. Useful when a result looks wrong: check the mask
+there before suspecting the model.
