@@ -162,3 +162,44 @@ roses, blended to the source's colour. 22.8 s on MPS at 8 steps.
 Note what comes back: a patch, not a frame. The response carries an offset, a
 size, and a 297x297 region - the mask plus the workflow's 32 px padding. The
 caching claim holds in both directions, so only the changed region travels.
+
+## Phase 3: what to expect from RapidRAW.app
+
+Not yet started. RapidRAW is not installed on this machine - `mdfind` finds no
+bundle outside the git checkouts. Latest upstream release is **v1.6.3**
+(2026-09-03). Two macOS arm64 builds are published, plain and `tethering`;
+take the plain one unless camera tethering is wanted.
+
+    02_RapidRAW_v1.6.3_macos-14_aarch64.dmg
+
+Known hazards, from upstream issues rather than from running it:
+
+| Hazard | Evidence | What it means here |
+| --- | --- | --- |
+| Not signed or notarised | issues #37 and #1438, both still open | Gatekeeper will refuse first launch. Expect to allow it in System Settings > Privacy and Security. Do not blanket-remove quarantine attributes. |
+| `failed to save changes: operation not permitted (os error 1)` | issue #1616, open, Apple Silicon, v1.6.2 | Reported as SIP; far more likely TCC. If it appears, grant RapidRAW access to the photo folder in Privacy and Security > Files and Folders. |
+| Poor performance on recent macOS | issue #515, open, "Tahoe" (macOS 26) | We are a major version further on at 27. Treat any slowness as expected-unknown, not as a local misconfiguration. |
+| Backend address field drops focus per keystroke | issue #197, closed | If typing the connector URL misbehaves, paste it instead. |
+| `workflow.json` will not load in the ComfyUI editor | issue #424, closed | It has no `version` key, so the ComfyUI UI rejects it with a Zod error. It is fine over the API, which is how the connector uses it. Do not "fix" it to make the editor happy. |
+
+The connector README states the setting plainly: point RapidRAW's `Self-Hosted`
+AI Backend at the connector, not at ComfyUI.
+
+    http://127.0.0.1:5000
+
+Also from that README: official support was declared to begin at RapidRAW
+v1.4.9, and the connector is still labelled unstable upstream.
+
+### Andy Hutchinson's write-up
+
+Brian flagged a parallel walkthrough. Both copies are paywalled and could not
+be read - Patreon returns 403 to any non-member fetch, and the Substack
+mirror cuts off above the technical content:
+
+- https://www.patreon.com/AndyHutchinson/posts/generative-adobe-168829104
+- https://ahutchinson.substack.com/p/generative-remove-without-the-adobe
+
+If the text is pasted in, cross-check it against the absolute-path finding
+above: that is the failure most likely to differ between his setup and ours,
+since it only bites when ComfyUI and the connector disagree about the input
+directory.
