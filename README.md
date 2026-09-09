@@ -27,7 +27,7 @@ Old Python areas (`~/.pyenv`, `~/mambaforge`, `~/miniforge3`) cleared
 2026-09-09. Working through the phases in `docs/FORKING.md`:
 
 - [x] 0. Remote for this repo
-- [ ] 1. Connector: fork, clone, run under uv
+- [x] 1. Connector: fork, clone, run under uv
 - [ ] 2. ComfyUI: fork, clone, uv + nightly torch, one stock render
 - [ ] 3. Wire the chain using the downloaded RapidRAW.app - no source changes
 - [ ] 4. Fork and build RapidRAW from source

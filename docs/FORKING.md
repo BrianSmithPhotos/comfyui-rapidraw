@@ -47,7 +47,9 @@ mistake.
 
 ## Fork hygiene
 
-`gh repo fork --clone --remote` sets up the standard triangle in one command:
+`gh repo fork <repo> --clone` sets up the standard triangle in one command.
+(`--remote` is only valid from inside an existing checkout - passing it
+alongside a repo argument is an error, and `--clone` already adds both.)
 
     origin    BrianSmithPhotos/<repo>    push here
     upstream  <original>/<repo>          fetch only
@@ -64,12 +66,13 @@ Keep `master`/`main` tracking upstream and do all work on branches. That way
 Each phase ends with something demonstrably running. Do not start the next
 until the current one does.
 
-**0. Give this repo a remote.** It has none - it is local-only on `master`.
-Create `BrianSmithPhotos/comfyui-rapidraw` and push.
+**0. Give this repo a remote.** DONE 2026-09-09.
+`BrianSmithPhotos/comfyui-rapidraw`, public, master pushed.
 
-**1. Connector only.** Fork, clone, `uv venv`, `uv run python main.py`, confirm
-it serves. 37 KB and a permissive licence make this the cheapest way to prove
-the fork-and-uv pattern before spending it on something large.
+**1. Connector only.** DONE 2026-09-09. Forked to
+`BrianSmithPhotos/RapidRAW-AI-Connector`, cloned, `uv venv --python 3.13`,
+39 packages, no torch. `/health` serves and correctly reports ComfyUI
+unreachable. See "What running it revealed" below.
 
 **2. ComfyUI.** Fork, clone, `uv venv --python 3.13`, nightly torch per
 `SETUP.md`, and get one render out of a stock workflow. No custom nodes yet.
@@ -87,6 +90,27 @@ Foundation Models directly. The realistic path is a Swift helper binary the
 Rust side shells out to, or an `objc2` shim. That is a research task, not a
 step in this sequence - and per the Xcode note it must build with
 `DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer`.
+
+## What running it revealed
+
+Three things the README does not say, found by reading `engine.py` and starting
+it:
+
+- **`COMFY_PORT` defaults to 5545, not 8188.** ComfyUI's standard port is 8188.
+  Whichever is chosen, set it explicitly rather than trusting either default -
+  a silent mismatch here looks exactly like ComfyUI being down.
+- **The connector binds `0.0.0.0` by default**, with `allow_origins=["*"]` and
+  no authentication, on port 5000. That is an unauthenticated image-processing
+  API offered to the whole LAN. RapidRAW runs on this machine, so bind
+  `127.0.0.1`. Port 5000 also collides with AirPlay Receiver when enabled;
+  it was free here.
+- **`pydantic-settings` pulls in `python-dotenv`**, so a `.env` placed in the
+  connector checkout is read automatically. That is the natural home for the
+  settings above, and the connector's `.gitignore` already excludes it.
+
+The API surface is three endpoints: `/health`, `/upload_source` and `/inpaint`.
+The caching claim holds up - `/upload_source` takes the image once against a
+`source_id`, and `/inpaint` then carries only a base64 mask and the prompts.
 
 ## Where your own capabilities go
 
