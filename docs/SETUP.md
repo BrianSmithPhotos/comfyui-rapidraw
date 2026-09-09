@@ -165,10 +165,29 @@ caching claim holds in both directions, so only the changed region travels.
 
 ## Phase 3: what to expect from RapidRAW.app
 
-Not yet started. RapidRAW is not installed on this machine - `mdfind` finds no
-bundle outside the git checkouts. Latest upstream release is **v1.6.3**
-(2026-09-03). Two macOS arm64 builds are published, plain and `tethering`;
-take the plain one unless camera tethering is wanted.
+RapidRAW is not installed on this machine - `mdfind` finds no bundle outside
+the git checkouts. Latest upstream release is **v1.6.3** (2026-09-03). Two
+macOS arm64 builds are published, plain and `tethering`; take the plain one
+unless camera tethering is wanted.
+
+Downloaded 2026-09-09 to `~/Downloads`. Integrity confirmed against the digest
+GitHub publishes for the asset - identical, not merely "downloaded fine":
+
+    size   29843165 bytes
+    sha256 949aea4fb2ee9bd3e7fbcc1af63a1076b81d68a4ca6a11c31fdf6a909ccc913a
+
+Inspected by mounting the image read-only. No app was launched.
+
+| | |
+| --- | --- |
+| Version | 1.6.3 |
+| Bundle ID | `io.github.CyberTimon.RapidRAW` |
+| Architecture | `arm64` only, not universal |
+| Signature | `adhoc, linker-signed`, TeamIdentifier not set |
+| `spctl -a -t exec` | rejects it |
+
+So issue #37 is confirmed by inspection, not just by report: the build carries
+no Developer ID and is not notarised.
 
     02_RapidRAW_v1.6.3_macos-14_aarch64.dmg
 
@@ -176,7 +195,8 @@ Known hazards, from upstream issues rather than from running it:
 
 | Hazard | Evidence | What it means here |
 | --- | --- | --- |
-| Not signed or notarised | issues #37 and #1438, both still open | Gatekeeper will refuse first launch. Expect to allow it in System Settings > Privacy and Security. Do not blanket-remove quarantine attributes. |
+| Not signed or notarised | confirmed by inspection, above; issues #37 and #1438 both open | Gatekeeper refuses the bundle. Allow it in System Settings > Privacy and Security on first launch. Do not blanket-remove quarantine attributes. |
+| The dmg carries no quarantine flag | `xattr` reports no `com.apple.quarantine` | Because it was fetched with `gh`, not a browser. A copy out of this image will therefore skip the first-launch prompt entirely. That is a real reduction in checking, and the reason it is acceptable here is the digest match above - the bytes are provably GitHub's. |
 | `failed to save changes: operation not permitted (os error 1)` | issue #1616, open, Apple Silicon, v1.6.2 | Reported as SIP; far more likely TCC. If it appears, grant RapidRAW access to the photo folder in Privacy and Security > Files and Folders. |
 | Poor performance on recent macOS | issue #515, open, "Tahoe" (macOS 26) | We are a major version further on at 27. Treat any slowness as expected-unknown, not as a local misconfiguration. |
 | Backend address field drops focus per keystroke | issue #197, closed | If typing the connector URL misbehaves, paste it instead. |
