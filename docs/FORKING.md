@@ -74,8 +74,11 @@ until the current one does.
 39 packages, no torch. `/health` serves and correctly reports ComfyUI
 unreachable. See "What running it revealed" below.
 
-**2. ComfyUI.** Fork, clone, `uv venv --python 3.13`, nightly torch per
-`SETUP.md`, and get one render out of a stock workflow. No custom nodes yet.
+**2. ComfyUI.** DONE 2026-09-09 (except the render, which is waiting on
+weights). Forked to `BrianSmithPhotos/ComfyUI`, cloned, v0.35.0, uv venv on
+3.13.14, nightly torch 2.15.0.dev20260908. Serves on 8188 with device `mps`
+and 128 GB of VRAM. The connector's `/health` reports `connected: true`, so the
+connector-to-ComfyUI link is proven. Weights still to come - see `SETUP.md`.
 
 **3. Wire the chain with zero source changes.** Point the connector at ComfyUI,
 then point the *downloaded* RapidRAW.app at the connector via Self-Hosted AI

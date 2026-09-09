@@ -21,12 +21,46 @@ which is where uv purity usually breaks. It has a `use_uv` switch in
 
 ## ComfyUI
 
+Installed and verified 2026-09-09 at v0.35.0. **Order matters**: `torch` is
+unpinned in `requirements.txt`, so nightly goes in first and the rest follows.
+Doing it the other way round gets the stable PyPI wheel.
+
     uv venv --python 3.13
-    # pin the nightly torch index, then
+    uv pip install --pre torch torchvision torchaudio \
+      --index-url https://download.pytorch.org/whl/nightly/cpu
     uv pip install -r requirements.txt
-    uv run main.py
+    uv run python main.py --listen 127.0.0.1 --port 8188
+
+The second install leaves the nightly alone - checked, torch was still
+`2.15.0.dev20260908` afterwards. On macOS the nightly MPS build ships in the
+`/nightly/cpu` channel; there is no separate mps index.
+
+Verified rather than assumed: `torch.backends.mps.is_available()` is true, and
+a 1024x1024 matmul on the `mps` device returns the correct sum. ComfyUI then
+reports device `mps` with the full 128 GB of unified memory as VRAM.
+
+Two benign startup warnings on Darwin: `comfy-aimdo` logs "Could not autodetect
+AIMDO implementation, assuming Nvidia" and then that it only supports Windows
+and Linux. Nothing to fix.
 
 Set `use_uv` in ComfyUI-Manager's `config.ini` once Manager is installed.
+
+## What the connector's workflow actually needs
+
+`workflow.json` is not a generic graph - it pins specific weights and one
+custom node. Nothing renders until these are present:
+
+| Requirement | Kind | Approx |
+| --- | --- | --- |
+| `XL_RealVisXL_V5.0_Lightning.safetensors` | SDXL Lightning checkpoint | 6.5 G |
+| `diffusion_pytorch_model_promax.safetensors` | ControlNet Union Promax SDXL | 2.5 G |
+| `sdxl_vae.safetensors` | SDXL VAE | 335 M |
+| `InpaintCropImproved`, `InpaintStitchImproved` | custom node | small |
+
+The two nodes come from `lquesada/ComfyUI-Inpaint-CropAndStitch` (GPL-3.0,
+actively maintained). Every other node in the graph is core in v0.35.0 -
+checked one by one. KSampler sits at `steps: 8, cfg: 1`, which is consistent
+with the Lightning checkpoint and means renders should be fast.
 
 ## RapidRAW-AI-Connector
 
