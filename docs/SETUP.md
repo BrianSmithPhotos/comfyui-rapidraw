@@ -49,18 +49,24 @@ subsequent edits transfer only the mask and prompt.
 
 Upstream calls it work in progress and not ready for production.
 
-## The old installs are not reusable
+## The old installs are gone
 
-`~/.pyenv` (4.2 G), `~/mambaforge` (3.9 G) and `~/miniforge3` (3.8 G) hold
-`lstein-stable-diffusion` and `ldm` from 2022 and `invokeai` from 2024. Their
-PyTorch long predates current MPS support, so none of it helps here - a fresh
-uv install is the right move regardless. Clearing them also shrinks the VS Code
-interpreter scan that produced a spurious "no Python found" prompt after a
-reboot on 2026-09-09.
+Removed 2026-09-09: `~/.pyenv` (4.2 G), `~/mambaforge` (3.9 G) and
+`~/miniforge3` (3.8 G), which held `lstein-stable-diffusion` and `ldm` from
+2022 and `invokeai` from 2024. Their PyTorch long predated current MPS support,
+so none of it carried over - a fresh uv install was the right move regardless.
+Verified gone, along with any stray `anaconda3` or `miniconda3`.
+
+Clearing them also removes the VS Code interpreter scan that produced a
+spurious "no Python found" prompt after a reboot on 2026-09-09: discovery took
+20.2 seconds crawling all three before resolving on its own.
+
+Homebrew Python remains and is what uv will draw on: 3.13.14 is installed at
+`/opt/homebrew/bin/python3.13`, which is the version this plan targets.
 
 ## Sources
 
-- https://github.com/comfyanonymous/ComfyUI
+- https://github.com/Comfy-Org/ComfyUI
 - https://github.com/CyberTimon/RapidRAW
 - https://github.com/CyberTimon/RapidRAW-AI-Connector
-- https://pypi.org/project/comfyui-manager/
+- https://github.com/Comfy-Org/ComfyUI-Manager (moved from ltdrdata/)
