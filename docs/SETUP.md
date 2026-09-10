@@ -360,3 +360,65 @@ hidden - but it belongs in the notes rather than being discovered later.
 
 Fork hygiene holds: the dylib lands in a gitignored path, and `git status` is
 clean after a full release build.
+
+## The generation resolution sweep
+
+Node 37 changed, everything else held fixed - same source, same mask, same
+seed - driving ComfyUI directly with the connector's own `workflow.json`.
+Subject was a real 5184x3888 frame with the sky masked.
+
+| node 37 | time | result |
+| --- | --- | --- |
+| 1280 (default) | 16.1 s | ok |
+| 1536 | 23.1 s | ok |
+| 1664 | 29.2 s | ok |
+| 1728 | 0.6 s | **fails** |
+| 2048 | 0.6 s | **fails** |
+
+### There is a hard ceiling on Apple Silicon, and it is not memory
+
+    RuntimeError: MPSGraph does not support tensor dims larger than INT_MAX
+
+Raised from the VAE encoder's mid-block self-attention, not from the sampler,
+and it is not an out-of-memory condition - the machine has 128 GB and ComfyUI
+explicitly checks for OOM and re-raises this as something else.
+
+The arithmetic is exact. The VAE bottleneck attends at `side/8`, so the
+attention matrix holds `(side/8)^2` squared elements, and MPSGraph indexes
+with a signed 32-bit integer:
+
+    side 1664 -> 43264 tokens -> 1,871,773,696 elements  under INT_MAX
+    side 1728 -> 46656 tokens -> 2,176,782,336 elements  over INT_MAX
+
+Predicted ceiling `8 * (2^31-1)^0.25` = **1722 px**. Tested 1664 and 1728 to
+bracket it; both behaved exactly as predicted. So the usable range is 1280 to
+about 1712, and 2048 is not reachable on MPS without tiled VAE encoding.
+
+### Same seed does not mean same image
+
+Changing node 37 changes the latent dimensions, so the noise lands
+differently and the clouds come out somewhere else entirely. Measured against
+the 1280 render, mean absolute difference over the generated band was 7.6
+levels at 1536 and 11.2 at 1664 - different weather, not the same weather in
+more detail. Resolution cannot be A/B tested at a fixed seed.
+
+### What the extra time actually buys
+
+Detail proxies over the regenerated band:
+
+| node 37 | mean gradient | Laplacian variance |
+| --- | --- | --- |
+| 1280 | 0.6347 | 12.216 |
+| 1536 | 0.7002 | 12.255 |
+| 1664 | 0.7783 | 12.574 |
+
+Mean gradient rises 23 percent from 1280 to 1664; Laplacian variance barely
+moves at 3 percent. For 80 percent more time, that is a poor trade **on this
+subject** - and the caveat matters, because an overcast sky is nearly the
+worst possible test for detail. There is almost no high-frequency content for
+the extra resolution to resolve. A textured subject - foliage, brickwork,
+water, fabric - is where the difference should show, and that test has not
+been run.
+
+Provisional recommendation: leave node 37 at 1280 for skies and other smooth
+areas, and re-test on texture before changing the default.
