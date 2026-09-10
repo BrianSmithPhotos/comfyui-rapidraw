@@ -278,3 +278,43 @@ The connector mirrors both inputs to `cache/sent/` on every request, so
 `last_sent_image.jpg` and `last_sent_mask.png` are always the last thing
 ComfyUI was asked to work on. Useful when a result looks wrong: check the mask
 there before suspecting the model.
+
+## Phase 4: building RapidRAW from source
+
+Fork cloned to a sibling checkout, `upstream` push disabled, working on a
+`build/v1.6.3` branch cut from the tag rather than `main`. `main` was 20
+commits ahead at the time; building the exact tag that we already proved works
+as a binary means any difference is the build, not upstream's work in progress.
+
+### Toolchain: check the pin before starting a build
+
+    src-tauri/rust-toolchain.toml   channel = "1.98"
+    src-tauri/Cargo.toml            rust-version = "1.98", edition = "2024"
+
+The machine had Homebrew Rust 1.96.0. **Homebrew's rust ignores
+`rust-toolchain.toml`** - that file is a rustup feature - so the pin would not
+have corrected it and the build would have failed on MSRV partway through.
+Homebrew stable happened to be 1.98.0, so `brew upgrade rust` was enough and
+no rustup install was needed. Now on 1.98.1.
+
+The Tauri CLI is an npm devDependency (`@tauri-apps/cli`), so `npm install`
+provides it. There is no need for `cargo install tauri-cli` and its long
+build.
+
+    npm install
+    npm run tauri build
+
+### Two things in Cargo.toml worth knowing
+
+    wgpu = "29.0" # Downgraded to prevent P3 color shifts on Apple devices
+    objc = "0.2"
+
+The first is a colour-management problem serious enough that upstream pinned
+an old graphics abstraction to avoid it - which matters more here than in most
+apps, since the whole point is looking at photographs.
+
+The second is the unmaintained `objc` crate, used in
+`src-tauri/src/window_customizer.rs` to reach AppKit through raw `msg_send!`
+for window corner rounding. Any new macOS bridging we write should use
+`objc2`, which is maintained and has sound `msg_send!` semantics. Noted for
+phase 5.
