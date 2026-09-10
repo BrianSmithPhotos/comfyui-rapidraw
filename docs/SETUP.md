@@ -624,3 +624,70 @@ shoes.
 
 Worth noting the subject tool's defaults are already sane -
 `{ grow: 0, feather: 0 }` at `maskUtils.ts:43` - unlike Quick Eraser's 75/75.
+
+## Large masks: an empty prompt is not neutral, and resolution plateaus
+
+A flock of sandpipers on a rock, brushed out in one mask. Mask quality was
+finally perfect - **100% full strength, 0% partial** - so feather is no longer a
+variable. But the result invented new birds.
+
+### Why the birds came back
+
+The mask covers **29.7% of the frame**, bbox 3737x2794. That is not inpainting,
+it is generative fill: the model must invent a region larger than most whole
+images. The surrounding *unmasked* pixels still show rock, water and birds, so
+with an empty prompt the model completes the obvious pattern.
+
+An empty prompt is neutral only when the surroundings are unambiguous. On the
+runner it was fine - a fence and grass imply fence and grass. On a bird colony
+it implies birds.
+
+Since the prompt lands in the *positive* conditioning (see above), describing
+the desired content is the working lever. `"bare granite rock, dry grass, still
+water, empty shoreline"` removed them completely.
+
+### Resolution, measured on real texture
+
+This mask is the first to sit in the regime where node 37 matters at all -
+context 5606px clamped to the 5184px frame, a **4.05x downscale** to 1280.
+Measuring the fill's high-frequency content (mean absolute Laplacian) against
+the *real* texture in a band just outside the mask gives a base-independent
+ratio, so composition re-rolls do not confound it:
+
+| run | fill hi-freq | real nearby | ratio | time |
+| --- | --- | --- | --- | --- |
+| empty prompt @1280 | 0.98 | 3.39 | 0.29 | 16.1s |
+| described @1280 | 0.98 | 3.39 | 0.29 | 15.2s |
+| described @1536 | 1.19 | 3.41 | **0.35** | 25.2s |
+| described @1664 | 1.19 | 3.42 | **0.35** | 31.4s |
+| (original content) | 4.78 | 3.59 | 1.33 | - |
+
+Two findings:
+
+- **1280 -> 1536 gains 21%. 1536 -> 1664 gains nothing** while costing 24% more
+  time. The plateau is well below the ~1722px MPS ceiling, so that ceiling is
+  not the binding constraint - the sampler is.
+- **Even at 1664 the fill carries only ~35% of the high-frequency detail of the
+  real texture beside it.** No available resolution closes that gap.
+
+### The real constraint is mask size, not resolution
+
+From `crop_magic_im`, the sampled crop is the mask bbox grown by
+`context_from_mask_extend_factor` then rescaled to the node 37 target, and
+`InpaintStitchImproved` scales the result back down:
+
+```
+crop_side ~= 1.5 x max(mask_bbox_w, mask_bbox_h)
+```
+
+Filling 3737px from a 1536px sample means a 2.4x upscale on the way out. That,
+not the model, is why it is soft.
+
+The practical answer is to **split a large removal into several smaller masks**.
+Keeping each bbox under ~850px puts `crop_side` under 1280, so the region is
+sampled at native resolution or better and the fill stays sharp. One 3700px
+mask cannot be rescued by any node 37 value.
+
+Corollary: for small masks (`crop_side` < 1280) the crop is *upscaled* before
+sampling and the excess is discarded on stitch, so raising node 37 does nothing
+at all. The runner edit (bbox 433x693, crop ~1039) was already in that regime.
