@@ -422,3 +422,53 @@ been run.
 
 Provisional recommendation: leave node 37 at 1280 for skies and other smooth
 areas, and re-test on texture before changing the default.
+
+## Quick Erase ghosting - the feather, not the model
+
+A running figure erased with Quick Erase left a visible ghost. Root-caused
+2026-09-10.
+
+**It never reached ComfyUI.** The connector log has no matching request, and
+the sidecar records `type: quick-eraser` with an empty `prompt`. Quick Erase
+uses RapidRAW's own bundled LaMa (`lama_fp16.onnx` in Application Support),
+not the SDXL workflow. Worth checking first whenever a generative result looks
+wrong: the two paths fail differently.
+
+**LaMa's fill is clean.** Decoding `patchData.color` from the sidecar shows the
+fence, grass and chairs reconstructed with no trace of the figure. The model
+did its job.
+
+**The ghost is in the composite.** Decoding `patchData.mask` from the same
+patch, over a 463x760 region:
+
+    full strength (>0.99)   9.3%
+    partial (0.01-0.99)    58.9%
+    zero (<0.01)           31.8%
+
+Across nearly 60 percent of the patch, the original pixels are blended back
+over the clean fill. That is the ghost, and it is arithmetic, not a model
+failure. The figure's feet come out worst - the mask reaches only about half
+strength there, so half the shoes survive.
+
+**Cause: the default feather.** The sidecar records `grow: 75, feather: 75`,
+and `AIPanel.tsx` defines exactly those as the Quick Eraser defaults:
+
+    [Mask.QuickEraser]: {
+      parameters: [
+        { key: 'grow',    min: -100, max: 100, step: 1, defaultValue: 75 },
+        { key: 'feather', min: 0,    max: 100, step: 1, defaultValue: 75 },
+      ],
+    }
+
+75 percent feather is reasonable for blending a tonal adjustment. It is wrong
+for erasing an object, where the mask interior must be fully opaque or the
+subject shows through. Both sliders are adjustable in the AI panel.
+
+**Fix:** keep `grow` high, drop `feather` to roughly 10-20. Grow covers the
+subject and its contact shadow; a small feather is all that is needed to hide
+the seam.
+
+Upstream inconsistency spotted while confirming this: `maskUtils.ts` creates a
+Quick Eraser submask with `grow: 50, feather: 50`, while `AIPanel.tsx`
+declares defaults of 75. The panel wins in practice. Harmless, but it means
+the "default" depends on where you look.
