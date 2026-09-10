@@ -318,3 +318,45 @@ The second is the unmaintained `objc` crate, used in
 for window corner rounding. Any new macOS bridging we write should use
 `objc2`, which is maintained and has sound `msg_send!` semantics. Noted for
 phase 5.
+
+### Build result
+
+Built clean on the first attempt once Rust was at 1.98.
+
+    Finished `release` profile [optimized] target(s) in 9m 34s
+    Built application at: src-tauri/target/release/RapidRAW
+    Bundling RapidRAW.app
+    Bundling RapidRAW_1.6.3_aarch64.dmg
+
+Wall clock 10m 10s at 247 percent CPU, so it is nowhere near saturating 20
+cores - the long pole is a dependency chain, not parallel work.
+
+| | ours | released |
+| --- | --- | --- |
+| Version | 1.6.3 | 1.6.3 |
+| Architecture | arm64 | arm64 |
+| Signature | adhoc, linker-signed | adhoc, linker-signed |
+| Executable size | 36215840 | 36215840 |
+| Executable SHA-256 | `f6f64818...` | `dbe7ffca...` |
+
+Same size to the byte, different hash. So the build is faithful but **not**
+bit-reproducible - expected, since Rust embeds absolute source paths and the
+Mach-O carries a fresh `LC_UUID` per link. Not a cause for concern, but worth
+knowing before anyone tries to verify a build by hash.
+
+### The build reaches out to the network
+
+    Downloading ONNX Runtime library for macos-aarch64...
+    URL: https://huggingface.co/CyberTimon/RapidRAW-Models/resolve/main/
+         onnxruntimes-v1.22.0/libonnxruntime-macos-aarch64.dylib
+    Successfully downloaded and verified src-tauri/resources/libonnxruntime.dylib
+
+`build.rs` pulls a 32 MB ONNX Runtime dylib from the maintainer's own Hugging
+Face repo at build time, rather than from Microsoft's releases or a crate.
+It does verify integrity after download. Two consequences: the build is not
+offline-capable on a clean tree, and the binary carries a native library from
+a personal account. Neither is unusual for a hobby project, and neither is
+hidden - but it belongs in the notes rather than being discovered later.
+
+Fork hygiene holds: the dylib lands in a gitignored path, and `git status` is
+clean after a full release build.
