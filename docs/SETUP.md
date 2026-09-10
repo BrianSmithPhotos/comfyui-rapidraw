@@ -472,3 +472,91 @@ Upstream inconsistency spotted while confirming this: `maskUtils.ts` creates a
 Quick Eraser submask with `grow: 50, feather: 50`, while `AIPanel.tsx`
 declares defaults of 75. The panel wins in practice. Harmless, but it means
 the "default" depends on where you look.
+
+## The ghost is the feather, and the graph already blends its own seam
+
+Second attempt at removing a running figure, this time routed deliberately
+through ComfyUI rather than the bundled LaMa. It hit Comfy - 20.8s of sampling,
+prompt "Remove the runner", crop bounds x=2770 y=1000 w=415 h=713. The result
+still ghosted, worse than before.
+
+Three hypotheses, tested one at a time against the same source, mask and seed.
+
+### Ruled out: the prompt
+
+`engine.py:306` splices RapidRAW's prompt into node **7**, the *positive*
+conditioning:
+
+```python
+wf["7"]["inputs"]["text"] = ", ".join(filter(None, [prompt, wf["7"]["inputs"]["text"]]))
+```
+
+So "Remove the runner" asks the model to *paint* a runner, and it obliged with a
+dark humanoid blob. Worth knowing, but not the cause: re-running with an empty
+prompt and with a descriptive one ("wooden fence, dry grass, white adirondack
+chairs, trees") ghosted just as badly.
+
+Note `cfg: 1`, required by the Lightning checkpoint, disables classifier-free
+guidance - so node 8's negative prompt is inert. Phrasing a removal as a
+negative cannot work here. For removal, describe what should *be* there, or
+send nothing.
+
+### Ruled out: the ControlNet hint
+
+The graph blanks the hint with a hard threshold before conditioning on it:
+
+```
+[10] ThresholdMask value=0.5      <- [36] cropped mask
+[11] ImageCompositeMasked          destination=cropped image, source=black, mask=[10]
+[14] ControlNetApplyAdvanced       strength=1.0, image=[11]
+```
+
+Since the mask was 86.9% partial, only ~46% of its pixels clear 0.5, so this
+looked like the culprit - a control image still showing the subject's edges at
+strength 1.0. Dumping node 11 through a `SaveImage` disproved it: the runner is
+solidly black in the hint. Threshold 0.5 sits well inside the feather ramp.
+
+### Confirmed: the feather
+
+Same source, same seed, same empty prompt, the mask binarised at 25/255 as the
+only change:
+
+| | core (mask=255) | feathered ring (1-254) |
+| --- | --- | --- |
+| soft mask, as the app sent it | 27.8 | **7.5** |
+| same mask binarised | 29.5 | **17.9** |
+
+(mean absolute difference from the source; higher means more of the subject
+actually replaced). The feathered ring is **86.9% of the masked area**, and
+across it the original pixels are largely retained. The binarised run is clean -
+fence, chairs, grass and tree all reconstructed, no figure.
+
+Two mechanisms compound, both downstream of the hint:
+
+- `SetLatentNoiseMask` (node 16) takes the *soft* mask, so the edges are only
+  partially denoised.
+- `InpaintStitchImproved` (node 35) blends the result back by the same soft
+  mask, laying the original over the fill.
+
+### The fix
+
+Set feather to **0**. The graph already blends its own seam:
+
+```
+[36] InpaintCropImproved   mask_blend_pixels: 32
+```
+
+RapidRAW's feather is therefore redundant *and* harmful - it double-blends, and
+the outer blend is applied to the subject rather than to the seam. Keep `grow`
+positive and generous; that is what pulls the mask past the subject's edges.
+
+Defaults that produce this, for the fork:
+
+- `src/components/panel/right/AIPanel.tsx:131` - `feather` defaultValue 75
+- `src/utils/maskUtils.ts:48` - `feather: 50` (inconsistent with the above)
+
+### Separately: the mask missed the shoes
+
+Overlaying the mask on the source shows good coverage of the body but only faint,
+low-value blobs over the shoes, which survive every run including the binarised
+one. That is a masking gap, not a model failure - brush them in or raise `grow`.
