@@ -560,3 +560,67 @@ Defaults that produce this, for the fork:
 Overlaying the mask on the source shows good coverage of the body but only faint,
 low-value blobs over the shoes, which survive every run including the binarised
 one. That is a masking gap, not a model failure - brush them in or raise `grow`.
+
+## Feather 0 confirmed, and why Subject select drops the shoes
+
+### The fix holds
+
+Brush mask, feather 0, empty prompt, 16.6s. Clean removal - runner gone including
+the shoes, fence, chairs, grass and tree all reconstructed. Mask composition
+moved from 13.1% full strength to **58.4%**.
+
+The remaining 41.6% partial is not the feather slider. Profiling the mask edge
+shows a ramp roughly 25-30px wide, with the deep interior (>25px in) 87.1% full
+at mean value 251.9. That is the brush's own edge falloff, not `feather`. It is
+small enough not to ghost, but worth knowing there is a floor.
+
+### Subject select and the shoes
+
+Not a bug in the mask index. `ai_processing.rs:1271` takes SAM's first mask:
+
+```rust
+let first_mask_slice = &mask_slice[0..area];
+```
+
+The decoder returns 4 mask tokens plus `iou_predictions`, and RapidRAW ignores
+the scores - which looked like the cause. Running the same encoder and decoder
+directly with a box around the runner disproves it:
+
+| token | iou | area |
+| --- | --- | --- |
+| **masks[0]** | **0.904** | 65824 |
+| masks[1] | 0.859 | 69388 |
+| masks[2] | 0.883 | 65716 |
+| masks[3] | 0.876 | 59063 |
+
+All four are near-identical and `argmax(iou)` picks 0 anyway. RapidRAW's choice
+is correct.
+
+The real reason is that SAM segments *the person*, and the shoes are a distinct
+object. The returned mask includes the socks and ankles but stops at the dark
+shoe bodies. Enlarging the rectangle cannot help: the box bounds the search, it
+does not force inclusion.
+
+Adding one positive point per shoe does help - and SAM agrees it is a better
+mask:
+
+| prompt | iou |
+| --- | --- |
+| box only | 0.904 |
+| box + 2 shoe points | **0.919** |
+
+The front shoe becomes fully covered; the rear one improves but stays partial.
+
+**The backend already supports this and the UI never uses it.**
+`run_sam_decoder` builds `point_labels` with `1.0` for positive points
+(`ai_processing.rs:1203`), but `GenerateAiSubjectMask` is invoked with only
+`startPoint` and `endPoint` (`src/hooks/useAiMasking.ts:180`). Exposing
+click-to-add-point on the subject tool is a UI change over a backend that is
+already there - a good first candidate for the fork.
+
+Until then the working sequence is Subject select, then a second **additive**
+submask (`SubMaskMode.Additive`, `src/utils/maskUtils.ts:8`) brushed over the
+shoes.
+
+Worth noting the subject tool's defaults are already sane -
+`{ grow: 0, feather: 0 }` at `maskUtils.ts:43` - unlike Quick Eraser's 75/75.
