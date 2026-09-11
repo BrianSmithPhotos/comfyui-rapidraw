@@ -672,6 +672,9 @@ Two findings:
 
 ### The real constraint is mask size, not resolution
 
+**Superseded.** The sub-division advice below was tested and failed; see
+"Sub-dividing a large mask does not work" at the end of this document.
+
 From `crop_magic_im`, the sampled crop is the mask bbox grown by
 `context_from_mask_extend_factor` then rescaled to the node 37 target, and
 `InpaintStitchImproved` scales the result back down:
@@ -691,3 +694,126 @@ mask cannot be rescued by any node 37 value.
 Corollary: for small masks (`crop_side` < 1280) the crop is *upscaled* before
 sampling and the excess is discarded on stitch, so raising node 37 does nothing
 at all. The runner edit (bbox 433x693, crop ~1039) was already in that regime.
+
+## Sub-dividing a large mask does not work, and the metric that said it did
+
+The section above recommends splitting a large removal into masks under ~850px
+so each is sampled at native resolution. That was tested on 2026-09-10 against
+the sandpiper frame and **it is wrong**. This section supersedes it.
+
+### What was built
+
+A partitioner and a sequential loop, both of which work correctly as code:
+
+- `scipy.ndimage.label` to split the mask into connected components.
+- Any component over `target / 1.5` (853px at node 37 = 1280) tiled into equal
+  cells with 32px overlap. Equal spans, not fixed cells, so there are no slivers.
+- Passes ordered outside-in: score each region by the fraction of its 1.5x
+  context box that is no longer masked, take the highest, recompute. The order
+  works inward to the worst point then out again (0.60 -> 0.40 -> 0.77).
+- A working full-frame image, re-saved as PNG between passes. Each pass loads a
+  source in which earlier regions are already filled.
+
+On the real mask: 19 regions, all under 853px, `union == mask` exactly.
+`InpaintStitchImproved` leaves pixels outside the region **byte-identical**
+(max delta 0 on pass 1), so taking the whole output as the next working frame
+costs nothing. 19 passes, 397s.
+
+### It regenerated the birds
+
+The tiled result is far worse than the single pass it was meant to beat. At
+100% it is headless, legless bird-shaped blobs with a scaly mottled texture,
+across the entire masked region.
+
+**Tiling cuts through objects.** An 853px tile splits a bird, so at the mask
+edge the model sees half a real bird just outside the mask - which is the
+strongest possible instruction to draw the rest of it. The outside-in ordering
+then compounds the error: once one tile commits a bird, every later tile treats
+it as ground truth and continues the flock.
+
+This is structural, not a tuning problem. No prompt, overlap, or pass order
+fixes it. **Tiling cannot remove an object larger than a tile.** Connected
+components remain valid - a component is a whole object, never cut - but on
+this frame the brushed flock is a single component, so it does not apply.
+
+### The metric was measuring the wrong thing
+
+Fill vs neighbouring-real high-frequency energy (mean absolute Laplacian) was
+used throughout the resolution work. For a *removal* it is invalid, and it
+scored this failure at 94%:
+
+| run | fill/real ratio | vs original | actual result |
+| --- | --- | --- | --- |
+| original | 1.24 | 100% | - |
+| one-shot 1280 | 0.37 | 30% | birds removed cleanly |
+| one-shot 1536 | 0.42 | 34% | birds removed cleanly |
+| tiled 19x1280 | 1.17 | **94%** | birds regenerated |
+
+The ratio rewards texture *density*. Regenerated birds are dense texture, so
+the failure scored near-perfect and the successful removals scored "starved".
+Every earlier conclusion drawn from this metric on a removal task should be
+re-read with that in mind. Judge a removal by looking at it.
+
+The corollary inverts the earlier finding: the one-shot's 4.05x downscale is
+**why** it worked. Destroying detail is the mechanism - it removes the evidence
+the model would otherwise complete from. That was filed as the problem.
+
+The original complaint, "some strange birds generated", was already fixed by
+the descriptive positive prompt. One pass, 16s, clean rock.
+
+### Node 37 stays at 1280
+
+Tested on a small mask (600x600 bbox, crop_side ~900, upscaled at both targets):
+
+| target | fill/real ratio | time |
+| --- | --- | --- |
+| 1280 | 0.91 | 15.1s |
+| 1536 | 1.28 | 23.2s |
+| original | 0.98 | - |
+
+1280 lands nearest the original. **1536 overshoots**, inventing texture that is
+not there, for 54% more time. Overshoot is overshoot whichever way the metric is
+read, so this result stands.
+
+## ComfyUI on Apple Silicon: one flag worth setting
+
+Sub-quadratic attention is a memory-*saving* algorithm. ComfyUI enables PyTorch
+SDPA by default for NVIDIA, Intel XPU, Ascend, MLU and some AMD - MPS is in none
+of those branches (`comfy/model_management.py`, around line 468), so Apple
+Silicon silently falls back to the memory-saving path on a machine with 128 GB.
+
+Matched A/B, same seeds, same mask, steady state after model load:
+
+| attention | time | output |
+| --- | --- | --- |
+| sub-quadratic (default) | 13.9s | - |
+| `--use-pytorch-cross-attention` | **12.5s** | mean abs diff 0.111, 0.18% of pixels differ by >2 |
+
+About 10% faster for no quality change, and it moves the VAE to pytorch
+attention as well. Worth setting permanently.
+
+`--highvram` is a **no-op** here: `model_management.py:595` forces
+`VRAMState.SHARED` on MPS unconditionally, after the flag is parsed, and line
+1104 already treats SHARED identically to HIGH_VRAM for load placement.
+
+Note when timing anything: ComfyUI caches by prompt, so an identical workflow
+returns in 0.5s without executing. Vary the seed per run.
+
+### Memory is not the constraint
+
+```
+SDXL          4897 MB   full load: True
+ControlNet    2397 MB   full load: True
+SDXLClipModel 1561 MB   full load: True
+AutoencoderKL  160 MB   full load: True
+model weight dtype torch.float16, manual cast: None
+```
+
+**~9.0 GB of 128 GB.** fp16 with no upcasting, everything fully loaded, each
+model requested exactly once across a 19-pass run - no reload thrash, no partial
+loads, no swapping. The memory is idle capacity, not a misconfiguration: this
+workflow has nothing to spend it on.
+
+What actually limits quality is the model. SDXL is 2.6B parameters, run in its
+weakest mode - 8-step Lightning at `cfg 1`, which disables the negative prompt
+entirely. That, not resolution and not mask size, is why removal is weak.
