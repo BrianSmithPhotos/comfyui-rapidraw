@@ -817,3 +817,115 @@ workflow has nothing to spend it on.
 What actually limits quality is the model. SDXL is 2.6B parameters, run in its
 weakest mode - 8-step Lightning at `cfg 1`, which disables the negative prompt
 entirely. That, not resolution and not mask size, is why removal is weak.
+
+Partly right. A 12B model does remove more completely - but it invents just as
+freely. See "FLUX.1-Fill-dev" below.
+
+## FLUX.1-Fill-dev: bigger, slower, and it still will not leave a hole empty
+
+The last section ended by blaming the model - 2.6B parameters of SDXL, in its
+weakest 8-step Lightning mode. So we installed the biggest inpainting model that
+fits: FLUX.1-Fill-dev, 12B parameters, purpose-built for fill.
+
+### Getting the weights without a licence gate
+
+`black-forest-labs/FLUX.1-Fill-dev` and `FLUX.1-schnell` are both gated on
+Hugging Face, and no token is configured locally. Every file is available
+ungated elsewhere:
+
+| file | ungated source | size |
+| --- | --- | --- |
+| `flux1-fill-dev.safetensors` | `Comfy-Org/flux1-dev` (`split_files/diffusion_models/`) | 23.8 GB |
+| `t5xxl_fp16.safetensors` | `comfyanonymous/flux_text_encoders` | 9.8 GB |
+| `clip_l.safetensors` | `comfyanonymous/flux_text_encoders` | 0.25 GB |
+| `ae.safetensors` | `second-state/FLUX.1-schnell-GGUF` | 0.34 GB |
+
+The Comfy-Org repackages do **not** carry the VAE - they split it out and it is
+not in any of the `Comfy-Org/flux1-*` repos. Before trusting a third-party
+mirror, check it against the others: `second-state/FLUX.1-schnell-GGUF`,
+`ffxvs/vae-flux`, `camenduru/FLUX.1-dev` and `ChuckMcSneed/FLUX.1-dev` all
+publish the same 335,304,388 bytes at sha256 `afc8e282...529e38`. Four
+independent mirrors agreeing is good enough; verify the hash after download.
+
+### The workflow
+
+The crop/stitch spine is unchanged - nodes 30, 47, 48, 36, 37, 35 are identical
+to the SDXL graph, so the crop geometry and the byte-exact stitch still hold.
+Everything between them is replaced:
+
+| dropped | added |
+| --- | --- |
+| 1 `CheckpointLoaderSimple` | 50 `UNETLoader` flux1-fill-dev |
+| 9/10/11 empty-image compositing | 51 `DualCLIPLoader` clip_l + t5xxl |
+| 12/13/14 Union ControlNet `repaint` | 52 `FluxGuidance` |
+| 15/16 `VAEEncode` + `SetLatentNoiseMask` | 53 `InpaintModelConditioning` |
+
+Flux Fill takes the masked pixels through `InpaintModelConditioning`, not
+through a ControlNet hint image - the fill conditioning is native to the model.
+`cfg` stays at 1 and `FluxGuidance` replaces it; Flux is guidance-distilled.
+
+### It is 23x slower
+
+| model | warm per image | first run |
+| --- | --- | --- |
+| SDXL Lightning one-shot, 8 steps | **12.5s** | - |
+| Flux Fill, 20 steps | **285s** | 336s including the 34 GB load |
+
+Memory was never a problem - 128 GB swallowed a 34 GB model stack without
+complaint, free RAM went 69 GB to 57 GB. This is the one thing the machine is
+genuinely good for. It is compute, not capacity, that costs 285 seconds.
+
+### It always puts something in the hole
+
+Six runs on the same sandpiper frame, same mask, same crop target of 1280:
+
+| prompt | guidance | seed | result |
+| --- | --- | --- | --- |
+| scene description | 30 | 424242 | large driftwood branch |
+| scene description | 10 | 424242 | same driftwood |
+| scene description | 50 | 424242 | same driftwood |
+| scene description | 30 | 777 | different driftwood branch |
+| "nothing on the rock, no objects" | 30 | 424242 | driftwood branch |
+| "nothing on the rock, no objects" | 30 | 777 | driftwood stub |
+| empty | 30 | 424242 | regenerated a bird |
+| empty | 10 | 424242 | regenerated a bird |
+
+Read it in three parts.
+
+**Guidance does nothing.** 10, 30 and 50 produce near-identical output. The
+prompt is the only live control.
+
+**An empty prompt regenerates the subject.** With nothing to describe, Flux
+completes the scene from context - the same mechanism that made sub-division
+fail, now confirmed on a second model family. The context says "birds on a
+rock", so it paints a bird.
+
+**A prompt that names absence does not produce absence.** "nothing on the rock,
+no objects" shrinks the driftwood but never removes it. Two different seeds both
+put wood on the rock. This is not a seed accident; it is what a generative fill
+model does. It has no representation for "leave this empty" - only for "what
+plausibly occupies this space".
+
+### Verdict for this use
+
+SDXL Lightning stays. Both models clear the birds; the difference is what they
+leave behind. SDXL invents rock, which on a shoreline rock is invisible. Flux
+invents driftwood, which is a conspicuous foreign object a viewer's eye goes
+straight to. Twenty-three times the cost for a worse photograph.
+
+The earlier conclusion needs qualifying, not reversing: the model *was* the
+limit on removal completeness - Flux removed the birds more thoroughly than SDXL
+manages. But removal completeness was never the failing. What is missing is a
+model that will decline to invent, and scaling parameters does not buy that.
+
+One frame, one mask. The claim "Flux Fill always inserts an object" is supported
+by six runs on this image, not by a survey.
+
+The 34 GB of weights are kept for now under `models/diffusion_models`,
+`models/text_encoders` and `models/vae` - 1.7 TB free, so there is no pressure
+to delete them.
+
+The workflow and the scripts that produced these numbers are in `flux/`:
+`fetch_flux.py` to pull the weights, `workflow_flux.json`, `flux_run.py` for a
+single fill, `flux_sweep.py` and `flux_sweep2.py` for the prompt, guidance and
+seed sweeps, `compare_flux.py` for the contact sheets.
